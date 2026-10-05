@@ -1,0 +1,252 @@
+================================================================================
+BigPickle.txt — CHANGES MADE BY BIGPICKLE (me), NOT BY GLM-5.3
+================================================================================
+Repo        : https://github.com/langergitanu/ThunderNotes-BigPickle.git
+Local path  : /home/pritam/AndroidStudioProjects/ThunderNotes
+Branch      : main
+Upstream src: /home/pritam/Downloads/ThunderNotes  (GLM-5.3's original output)
+Date        : 2026-10-05
+
+PURPOSE: GLM-5.3 still holds the ORIGINAL, NON-COMPILING codebase. This file
+lists every edit I made so GLM-5.3 can sync its copy to what actually builds.
+
+VERIFICATION STATE OF THE COMMITTED CODE:
+  ./gradlew clean :app:assembleDebug :app:testDebugUnitTest
+    -> BUILD SUCCESSFUL
+    -> 0 Kotlin warnings, 0 errors
+    -> 14 unit tests run, 0 failed, 0 errored
+    -> APK: app/build/outputs/apk/debug/app-debug.apk (18.5 MB)
+
+FILE FORMAT BELOW: <filename> : <line> : what changed and why
+
+================================================================================
+SECTION A — BLOCKING BUGS FOUND IN GLM-5.3's ORIGINAL CODE (must be fixed in
+             GLM's own copy, or it will keep reintroducing them)
+================================================================================
+
+A1. *** CRITICAL — SOURCE FILE DID NOT COMPILE AT ALL ***
+     File: app/src/main/java/com/thundernotes/ThunderNotesApp.kt : 16
+     Line was:
+         *                            definitions from assets/brushes/*.brushfamily).
+     I changed it to:
+         *                            definitions from assets/brushes/<brush-id>.brushfamily).
+     WHY: The literal "/*" inside that KDoc opened a NESTED block comment.
+     Kotlin (unlike Java) supports nested block comments, so the "*/" on the
+     following lines only closed the inner comment; the outer comment stayed
+     open to EOF. The compiler reported:
+         e: ThunderNotesApp.kt:43:1 Syntax error: Unclosed comment.
+     That single typo cascaded into 5 total errors, including:
+         e: RepositoryModule.kt:4:25  Unresolved reference 'ThunderNotesApp'.
+         e: RepositoryModule.kt:32:17 Unresolved reference 'ThunderNotesApp'.
+         e: RepositoryModule.kt:32:39 Unresolved reference 'applicationContext'.
+     Those RepositoryModule errors were FALSE — they were only fallout from
+     ThunderNotesApp failing to parse. No fix was needed in RepositoryModule.kt.
+     NOTE FOR GLM: when you write a file glob inside a Kotlin comment, never
+     write the "/*" sequence. Use a placeholder like <brush-id> instead.
+
+================================================================================
+SECTION B — TOOLCHAIN FIXES I APPLIED (config only, no app logic touched)
+             These are the "environment" edits. GLM should adopt them in its
+             build files so its own builds do not hit the same walls.
+================================================================================
+
+B1. AAR metadata failure that blocked ALL builds
+    File: gradle/libs.versions.toml : 5
+      was: coreKtx = "1.19.0"
+      now: coreKtx = "1.18.0"
+    WHY: androidx.core 1.19.x declares `minCompileSdk=37`. This machine only has
+         the android-34 and android-36.1 platforms installed, so the build failed
+         with "requires ... compile against version 37 or later". I verified
+         against Google's published AAR metadata:
+             core 1.18.0 -> minCompileSdk=36   <-- highest version that works here
+             core 1.19.1 -> minCompileSdk=37   <-- does NOT work here
+     GLM NOTE: keep core-ktx at 1.18.0 unless we install the android-37 platform.
+     (Note: build-tools 37.0.0 IS installed, but the android-37 *platform* is not,
+      and there is no cmdline-tools/sdkmanager on this machine to add it.)
+
+B2. AGP 9.2.1 refuses the standalone Kotlin plugin — needs BOTH flags
+    File: gradle.properties : 35 and : 38  (added)
+      added: android.builtInKotlin=false
+      added: android.newDsl=false
+    WHY: This project uses AGP 9.2.1, which changed Kotlin handling. The failure
+         chain I hit, in order:
+           (a) With AGP's built-in Kotlin ON (the AGP 9 default) and no
+               kotlin-android plugin: KSP aborts with
+                 "e: [ksp] java.lang.IllegalStateException: unexpected jvm signature V"
+           (b) Applying kotlin-android without disabling built-in Kotlin:
+                 "Cannot add extension with name 'kotlin', as there is an
+                  extension already registered with that name."
+           (c) Setting ONLY android.builtInKotlin=false:
+                 "class ...ApplicationExtensionImpl... cannot be cast to class
+                  com.android.build.gradle.BaseExtension"
+           (d) Setting ONLY android.newDsl=false is not enough on its own.
+         KGP 2.0.21 AND 2.2.20 both failed at (c). Only AGP's own error text
+         pointed to the real solution: BOTH flags together, plus a KGP new
+         enough for AGP 9's DSL. That combination is what works now.
+    TOOL VERSIONS THAT ACTUALLY BUILD (see Section C for where they live):
+         Kotlin 2.3.21, KSP 2.3.12, Room 2.7.2, kotlinx-serialization 1.9.0
+    CAVEAT FOR GLM: `android.builtInKotlin=false` is already flagged DEPRECATED
+         by AGP 9 and "will be removed in version 10.0". This WILL need rework
+         before the project moves to AGP 10. Flagging it rather than silently
+         leaving a landmine.
+
+B3. Kotlin 2.3 renamed the jvm-default flag and its values
+    File: app/build.gradle.kts : 70
+      was: freeCompilerArgs.add("-Xjvm-default=all")
+      now: freeCompilerArgs.add("-jvm-default=enable")
+    WHY: -Xjvm-default is deprecated, and "all" is no longer a valid value:
+         "e: Unknown -jvm-default mode: all, supported modes:
+             [disable, enable, no-compatibility]"
+         This arg is still REQUIRED — Room's @Transaction default methods on DAO
+         interfaces (e.g. FolderClosureDao.rebuildClosureFor) need real JVM
+         default methods. Do not delete it; only the spelling changed.
+
+B4. Serialized-protobuf API needs an opt-in
+    File: app/build.gradle.kts : 73  (added)
+      added: freeCompilerArgs.add("-opt-in=kotlinx.serialization.ExperimentalSerializationApi")
+    WHY: The 14 @ProtoNumber fields in format/proto/InkStrokeProto.kt and the
+         ProtoBuf encode/decode calls in InkStrokeSerializer.kt produced ~25
+         "This declaration needs opt-in" warnings. I opted in project-wide
+         instead of annotating each file. No behaviour change.
+
+B5. Room could not export its schema
+    File: app/build.gradle.kts : 77-80  (added block)
+      added:
+        ksp {
+            arg("room.schemaLocation", "$projectDir/schemas")
+        }
+    WHY: Without this Room warned on both databases:
+         "Schema export directory was not provided to the annotation processor
+          so Room cannot export the schema."
+         Now exports to app/schemas/.../1.json (2 files, both committed).
+         This matters later: real migration tests need these JSON schemas.
+
+B6. Deprecated Room API — now a warning on every build
+    File: app/src/main/java/com/thundernotes/data/db/AppDatabase.kt : 62
+    File: app/src/main/java/com/thundernotes/data/db/NoteDatabase.kt : 104
+      was: .fallbackToDestructiveMigrationOnDowngrade()
+      now: .fallbackToDestructiveMigrationOnDowngrade(dropAllTables = true)
+    WHY: Room deprecated the no-arg form in favour of an overload that states
+         whether ALL tables get dropped. Behaviour is deliberately UNCHANGED —
+         `true` matches what the no-arg version did. Flagging it because this
+         is destructive-on-downgrade behaviour; confirm that is still intended
+         once real migrations exist.
+
+================================================================================
+SECTION C — DEPENDENCY / PLUGIN VERSIONS (the ones that build on AGP 9.2.1)
+================================================================================
+    File: gradle/libs.versions.toml
+      kotlin       = "2.3.21"      (was 2.0.21 — incompatible with AGP 9)
+      ksp          = "2.3.12"       (was 2.0.21-1.0.25 — incompatible with AGP 9)
+      room         = "2.7.2"        (was 2.6.1)
+      serialization= "1.9.0"        (was 1.7.1)
+      coreKtx      = "1.18.0"       (see B1)
+    File: build.gradle.kts : 3-6 and app/build.gradle.kts : 3-5
+      Plugin aliases now declared: com.android.application,
+      org.jetbrains.kotlin.android, com.google.devtools.ksp,
+      org.jetbrains.kotlin.plugin.serialization
+
+================================================================================
+SECTION D — FILE IMPORT / MERGE (not a code change; context only)
+================================================================================
+GLM-5.3's backend was merged into the pre-existing empty-views Android Studio
+project. No dummy Hello World code remains — it was fully replaced, as intended.
+
+  ADDED (51 Kotlin files from Downloads/ThunderNotes):
+    app/src/main/java/com/thundernotes/data/**   (16 entities, 15 DAOs,
+        AppDatabase.kt, NoteDatabase.kt, 7 repositories, RepositoryModule.kt)
+    app/src/main/java/com/thundernotes/format/** (InkStrokeProto.kt,
+        InkStrokeSerializer.kt, ThunderFile.kt, ThunderManifest.kt,
+        ThunderFormatConstants.kt)
+    app/src/main/java/com/thundernotes/ThunderNotesApp.kt
+    app/src/main/java/com/thundernotes/MainActivity.kt   (replaced Hello World)
+    app/src/test/java/com/thundernotes/format/{InkStrokeSerializerTest,
+        ThunderFileRoundTripTest}.kt
+
+  OVERWRITTEN (GLM's versions won, they are the real ones):
+    app/src/main/AndroidManifest.xml   (adds 11 permissions, tablet/stylus
+                                       uses-feature, ThunderNotesApp as
+                                       android:name, configChanges, largeHeap)
+    app/src/main/res/values/{colors,strings,themes,dimens}.xml
+    app/src/main/res/layout/activity_main.xml
+    app/src/main/res/xml/data_extraction_rules.xml
+    app/proguard-rules.pro
+    .gitignore   (now excludes .idea/, local.properties, keystores, api_keys)
+    gradle.properties, build.gradle.kts, app/build.gradle.kts,
+    gradle/libs.versions.toml
+
+  ADDED resources:
+    app/src/main/res/drawable/ic_thunder.xml
+    app/src/main/res/drawable/ic_thunder_foreground.xml
+    app/src/main/res/mipmap-anydpi-v26/ic_launcher{,_round}.xml
+
+  DELETED (Android Studio's default placeholder icon + day/night theme that
+           GLM's design system replaces):
+    app/src/main/res/mipmap-anydpi/, mipmap-hdpi/, mipmap-mdpi/,
+        mipmap-xhdpi/, mipmap-xxhdpi/, values-night/,
+        drawable/ic_launcher_background.xml, drawable/ic_launcher_foreground.xml
+
+  NOT COMMITTED (correctly ignored): local.properties (contains this machine's
+    SDK path), .idea/, build/, .gradle/, app/build/.
+
+================================================================================
+SECTION E — BUGS I DID **NOT** FIX (too complex / out of scope — GLM's job)
+================================================================================
+Nothing here is a compile error; all of it builds and runs. These are
+correctness/design concerns I deliberately did NOT touch.
+
+E1. DUPLICATE DATABASE — worth confirming this is intended.
+    Files: data/db/AppDatabase.kt and data/db/NoteDatabase.kt
+    Both define near-identical Room databases with overlapping entities. Which
+    one is authoritative? The .thunder per-note DB and the app-wide index DB
+    probably SHOULD be separate, but then AppDatabase's schema should not also
+    carry the per-note tables. Needs a decision, not a patch from me.
+
+E2. PHASE MARKERS DISAGREE.
+    data/repository/RepositoryModule.kt docs say "Phase 2 — initialize the Room
+    database (ThunderNotesDatabase)" but the class on disk is named
+    NoteDatabase.kt (there is no ThunderNotesDatabase class). Likely a stale
+    name from an earlier plan. Cosmetic, but it will mislead.
+
+E3. MainActivity IS A PLACEHOLDER.
+    app/src/main/java/com/thundernotes/MainActivity.kt just inflates
+    activity_main.xml (logo + "Phase 1 — project skeleton" text). No real UI,
+    no navigation graph wired up, no canvas. Expected at this stage; noting it
+    so the empty screen is not mistaken for a bug.
+
+E4. LINT, NOT YET RUN.
+    I only ran assembleDebug + unit tests. No lint / no on-device run. Expect
+    lint findings (unused resources, missing ProGuard rules for Room when
+    minify is enabled, possible API-level issues behind the many
+    android:tools:targetApi annotations).
+
+E5. MINIFY STILL OFF.
+    app/build.gradle.kts:33 has isMinifyEnabled = false with a comment saying it
+    flips on once R8 keep rules exist. app/src/main/keepRules/rules.keep is
+    still empty. Room + kotlinx-serialization + reflection-free DAOs should be
+    R8-safe, but this is untested with minification on.
+
+E6. UNUSED / ORPHANED GRADLE EXTRAS.
+    app/build.gradle.kts still carries the DL project's `debug {
+    applicationIdSuffix = ".debug" }` intent from its original build.gradle.kts,
+    but I did not activate a `.debug` suffix, and `optimization { enable =
+    false }` on release is an AGP 9 block whose purpose is unclear. Also
+    android.defaults.buildfeatures.aidl/renderscript were dropped. Cosmetic,
+    but decide before anyone relies on a .debug variant.
+
+================================================================================
+SECTION F — HOW GLM-5.3 SHOULD SYNC
+================================================================================
+1. git clone https://github.com/langergitanu/ThunderNotes-BigPickle.git
+2. Apply Sections A + B + C to your in-memory copy. Section A is mandatory or
+   the project will not compile.
+3. Preserve the AGP 9 flags in gradle.properties (B2). Do not "clean them up".
+4. Do not revert core-ktx to 1.19.0 unless android-37 platform is installed.
+5. Re-run: ./gradlew clean :app:assembleDebug :app:testDebugUnitTest
+   Expect BUILD SUCCESSFUL and 14/14 tests passing.
+6. When you add real migrations, keep room.schemaLocation wired (B5) and commit
+   app/schemas/ — those JSON files are the migration test fixtures.
+
+================================================================================
+END OF FILE
+================================================================================
