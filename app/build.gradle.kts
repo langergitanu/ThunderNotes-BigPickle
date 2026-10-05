@@ -89,6 +89,7 @@ dependencies {
     implementation(libs.androidx.recyclerview)
     implementation(libs.androidx.activity.ktx)
     implementation(libs.androidx.fragment.ktx)
+    implementation(libs.androidx.gridlayout)
 
     // ─── Lifecycle + ViewModel + LiveData ────────────────────────────────
     implementation(libs.androidx.lifecycle.runtime.ktx)
@@ -124,6 +125,11 @@ dependencies {
     testImplementation(libs.androidx.room.testing)
     testImplementation(libs.robolectric)
     testImplementation(libs.androidx.test.core)
+    // AndroidJUnit4 runner — needed by Robolectric tests that use
+    // @RunWith(AndroidJUnit4::class). Previously only declared as
+    // androidTestImplementation; added as testImplementation so the new
+    // AppDatabaseTest (Robolectric, in-app/src/test/) can run.
+    testImplementation(libs.androidx.junit)
     androidTestImplementation(libs.androidx.junit)
     androidTestImplementation(libs.androidx.espresso.core)
     androidTestImplementation(libs.androidx.room.testing)

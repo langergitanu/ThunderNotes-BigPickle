@@ -1,560 +1,215 @@
 ================================================================================
-BigPickle.txt — CHANGES MADE BY BIGPICKLE (me), NOT BY GLM-5.3
+BigPickle.txt — CURRENT STATE + OPEN ISSUES ONLY
 ================================================================================
 Repo        : https://github.com/langergitanu/ThunderNotes-BigPickle.git
 Local path  : /home/pritam/AndroidStudioProjects/ThunderNotes
-Branch      : main
-Upstream src: /home/pritam/Downloads/ThunderNotes  (GLM-5.3's original output)
-Date        : 2026-10-05  (rev. 3 — Sync 2 reviewed, see Section J)
-
-PURPOSE: GLM-5.3's repo now builds. This file lists every edit I made so
-GLM-5.3 can sync its copy to what actually builds and passes lint.
-
-VERIFICATION STATE OF THE COMMITTED CODE (rev. 3, re-verified this round):
-  ./gradlew clean :app:assembleDebug :app:testDebugUnitTest lintDebug --rerun-tasks
-    -> BUILD SUCCESSFUL
-    -> 0 Kotlin errors (1 deprecation warning, see G.3)
-    -> 14 unit tests run, 0 failed, 0 errored
-    -> lint: 0 errors, 142 warnings (all informational — see Section G)
-    -> APK: app/build/outputs/apk/debug/app-debug.apk (18,460,959 bytes = 18.5 MB)
-
-ALSO VERIFIED THIS ROUND (Section J): I cloned GLM's pushed repo 75dd35a from
-scratch into a throwaway directory and ran the same build there, to confirm
-YOUR repo builds and not just mine. Result: BUILD SUCCESSFUL, 13 tests,
-lint 0 errors / 142 warnings. Details + 4 bookkeeping discrepancies in J.
-
-FILE FORMAT BELOW: <filename> : <line> : what changed and why
+GLM's repo  : /home/pritam/Downloads/ThunderNotes (commit a04e46b, "Phase 5")
+Date        : 2026-10-06
+Codebase    : I made BUILD FIXES this round (Phase 5 did not compile). See
+              Section 0. Interactive test results in Sections 1-3.
 
 ================================================================================
-SECTION A — BLOCKING BUGS FOUND IN GLM-5.3's ORIGINAL CODE (must be fixed in
-             GLM's own copy, or it will keep reintroducing them)
+SECTION 0 — PHASE 5 DID NOT BUILD. I FIXED 6 DEFECTS TO GET IT RUNNING.
+              These are all in GLM's a04e46b, NOT pre-existing.
 ================================================================================
+None of this was caught by GLM because there is no Android SDK in GLM's
+environment — it could not compile. Every item below is a hard build failure
+or a crash-on-launch, confirmed against the actual toolchain.
 
-A1. *** CRITICAL — SOURCE FILE DID NOT COMPILE AT ALL ***
-     File: app/src/main/java/com/thundernotes/ThunderNotesApp.kt : 16
-     Line was:
-         *                            definitions from assets/brushes/*.brushfamily).
-     I changed it to:
-         *                            definitions from assets/brushes/<brush-id>.brushfamily).
-     WHY: The literal "/*" inside that KDoc opened a NESTED block comment.
-     Kotlin (unlike Java) supports nested block comments, so the "*/" on the
-     following lines only closed the inner comment; the outer comment stayed
-     open to EOF. The compiler reported:
-         e: ThunderNotesApp.kt:43:1 Syntax error: Unclosed comment.
-     That single typo cascaded into 5 total errors, including:
-         e: RepositoryModule.kt:4:25  Unresolved reference 'ThunderNotesApp'.
-         e: RepositoryModule.kt:32:17 Unresolved reference 'ThunderNotesApp'.
-         e: RepositoryModule.kt:32:39 Unresolved reference 'applicationContext'.
-     Those RepositoryModule errors were FALSE — they were only fallout from
-     ThunderNotesApp failing to parse. No fix was needed in RepositoryModule.kt.
-     NOTE FOR GLM: when you write a file glob inside a Kotlin comment, never
-     write the "/*" sequence. Use a placeholder like <brush-id> instead.
+BUILD-BREAKING (5):
 
-================================================================================
-SECTION B — TOOLCHAIN FIXES I APPLIED (config only, no app logic touched)
-             These are the "environment" edits. GLM should adopt them in its
-             build files so its own builds do not hit the same walls.
-================================================================================
+B-1. app/src/main/res/layout/fragment_create_note.xml : 64, 109, 154, 208
+     app:layout_margin="@dimen/space_xs"
+     -> android:layout_margin="@dimen/space_xs"
+     ERROR: AAPT "attribute layout_margin not found". layout_margin is a
+     framework attribute — there is no app:layout_margin. The `app:` namespace
+     is only for attributes the library defines. Also: GridLayout does not
+     honour layout_margin the same way; these cards should use the GridLayout
+     margin params if the intent was spacing between grid cells.
 
-B1. AAR metadata failure that blocked ALL builds
-    File: gradle/libs.versions.toml : 5
-      was: coreKtx = "1.19.0"
-      now: coreKtx = "1.18.0"
-    WHY: androidx.core 1.19.x declares `minCompileSdk=37`. This machine only has
-         the android-34 and android-36.1 platforms installed, so the build failed
-         with "requires ... compile against version 37 or later". I verified
-         against Google's published AAR metadata:
-             core 1.18.0 -> minCompileSdk=36   <-- highest version that works here
-             core 1.19.1 -> minCompileSdk=37   <-- does NOT work here
-     GLM NOTE: keep core-ktx at 1.18.0 unless we install the android-37 platform.
-     (Note: build-tools 37.0.0 IS installed, but the android-37 *platform* is not,
-      and there is no cmdline-tools/sdkmanager on this machine to add it.)
+B-2. app/src/main/res/layout/fragment_thunder_home.xml : 54
+     app/src/main/res/layout/fragment_notes_library.xml : 42
+     style="@style/Widget.Material3.Button.IconButton.OutlinedButton"
+     -> style="@style/Widget.Material3.Button.IconButton.Outlined"
+     ERROR: "resource style/...IconButton.OutlinedButton not found".
+     Self-check that it is a typo and not a real style: extracted material
+     1.14.0 and listed every Widget.Material3.Button.IconButton.* style:
+       IconButton, .Close.Snackbar, .Filled, .Filled.Tonal,
+       .Filled.Tonal.ListItemRevealLayout, .ListItemRevealLayout,
+       .Outlined, .Outlined.ListItemRevealLayout
+     There is no ".OutlinedButton". ".Outlined" is the correct one.
 
-B2. AGP 9.2.1 refuses the standalone Kotlin plugin — needs BOTH flags
-    File: gradle.properties : 35 and : 38  (added)
-      added: android.builtInKotlin=false
-      added: android.newDsl=false
-    WHY: This project uses AGP 9.2.1, which changed Kotlin handling. The failure
-         chain I hit, in order:
-           (a) With AGP's built-in Kotlin ON (the AGP 9 default) and no
-               kotlin-android plugin: KSP aborts with
-                 "e: [ksp] java.lang.IllegalStateException: unexpected jvm signature V"
-           (b) Applying kotlin-android without disabling built-in Kotlin:
-                 "Cannot add extension with name 'kotlin', as there is an
-                  extension already registered with that name."
-           (c) Setting ONLY android.builtInKotlin=false:
-                 "class ...ApplicationExtensionImpl... cannot be cast to class
-                  com.android.build.gradle.BaseExtension"
-           (d) Setting ONLY android.newDsl=false is not enough on its own.
-         KGP 2.0.21 AND 2.2.20 both failed at (c). Only AGP's own error text
-         pointed to the real solution: BOTH flags together, plus a KGP new
-         enough for AGP 9's DSL. That combination is what works now.
-    TOOL VERSIONS THAT ACTUALLY BUILD (see Section C for where they live):
-         Kotlin 2.3.21, KSP 2.3.12, Room 2.7.2, kotlinx-serialization 1.9.0
-    CAVEAT FOR GLM: `android.builtInKotlin=false` is already flagged DEPRECATED
-         by AGP 9 and "will be removed in version 10.0". This WILL need rework
-         before the project moves to AGP 10. Flagging it rather than silently
-         leaving a landmine.
+B-3. app/src/main/java/com/thundernotes/ui/create/CreateNoteFragment.kt
+     app/src/main/java/com/thundernotes/ui/create/ImportFileFragment.kt
+     Both use R.string.* but neither imports com.thundernotes.R.
+     ERROR: "Unresolved reference 'R'" at CreateNoteFragment.kt:65,88 and
+     ImportFileFragment.kt:37. Added `import com.thundernotes.R` to each.
+     NOTE: CoverSelectionFragment.kt also looked like it used bare R. but it
+     only references android.R.color.darker_gray, so it is fine — do not
+     "fix" that one.
 
-B3. Kotlin 2.3 renamed the jvm-default flag and its values
-    File: app/build.gradle.kts : 70
-      was: freeCompilerArgs.add("-Xjvm-default=all")
-      now: freeCompilerArgs.add("-jvm-default=enable")
-    WHY: -Xjvm-default is deprecated, and "all" is no longer a valid value:
-         "e: Unknown -jvm-default mode: all, supported modes:
-             [disable, enable, no-compatibility]"
-         This arg is still REQUIRED — Room's @Transaction default methods on DAO
-         interfaces (e.g. FolderClosureDao.rebuildClosureFor) need real JVM
-         default methods. Do not delete it; only the spelling changed.
+B-4. app/src/main/java/com/thundernotes/MainActivity.kt : 45-48
+     navController.navigate(destId) { launchSingleTop = true }
+     ERROR: "Unresolved reference 'launchSingleTop'" + argument type mismatch.
+     The `navigate { }` DSL + `launchSingleTop` need the navigation-common KTX
+     `NavOptionsBuilder`, which is not what these artifacts expose at this
+     version. Replaced with the stable API:
+       navController.navigate(destId, null,
+           NavOptions.Builder().setLaunchSingleTop(true).build())
+     NOTE the null Bundle argument is REQUIRED: there is no
+     navigate(int, NavOptions) overload. The overloads are
+     navigate(int), navigate(int, Bundle), navigate(int, Bundle, NavOptions).
+     I verified this by javap-ing NavController.class from
+     navigation-runtime-2.7.7.aar.
 
-B4. Serialized-protobuf API needs an opt-in
-    File: app/build.gradle.kts : 73  (added)
-      added: freeCompilerArgs.add("-opt-in=kotlinx.serialization.ExperimentalSerializationApi")
-    WHY: The 14 @ProtoNumber fields in format/proto/InkStrokeProto.kt and the
-         ProtoBuf encode/decode calls in InkStrokeSerializer.kt produced ~25
-         "This declaration needs opt-in" warnings. I opted in project-wide
-         instead of annotating each file. No behaviour change.
+CRASH ON LAUNCH (1) — this one boots then dies, so it is worse than a build error:
 
-B5. Room could not export its schema
-    File: app/build.gradle.kts : 77-80  (added block)
-      added:
-        ksp {
-            arg("room.schemaLocation", "$projectDir/schemas")
-        }
-    WHY: Without this Room warned on both databases:
-         "Schema export directory was not provided to the annotation processor
-          so Room cannot export the schema."
-         Now exports to app/schemas/.../1.json (2 files, both committed).
-         This matters later: real migration tests need these JSON schemas.
+B-5. app/src/main/java/com/thundernotes/MainActivity.kt : 40
+     navController = findNavController(R.id.nav_host)
+     CRASH: "java.lang.IllegalStateException: Activity
+     com.thundernotes.MainActivity@... does not have a NavController set on
+     2131231076". MainActivity.onCreate, fresh install, every launch. The app
+     showed the launcher screen for a moment then died. Replaced with:
+       val navHostFragment = supportFragmentManager
+           .findFragmentById(R.id.nav_host) as NavHostFragment
+       navController = navHostFragment.navController
+     WHY: the @id/nav_host is on the FragmentContainerView; Navigation's
+     activity-level findNavController helper looks for the controller tag on a
+     view / fragment at that id and does not find it on this view. Going
+     through supportFragmentManager is the documented approach for
+     FragmentContainerView-hosted NavHosts. (The old `<fragment
+     android:name="NavHostFragment">` form is the one the activity helper was
+     designed for.)
 
-B6. Deprecated Room API — now a warning on every build
-    File: app/src/main/java/com/thundernotes/data/db/AppDatabase.kt : 62
-    File: app/src/main/java/com/thundernotes/data/db/NoteDatabase.kt : 104
-      was: .fallbackToDestructiveMigrationOnDowngrade()
-      now: .fallbackToDestructiveMigrationOnDowngrade(dropAllTables = true)
-    WHY: Room deprecated the no-arg form in favour of an overload that states
-         whether ALL tables get dropped. Behaviour is deliberately UNCHANGED —
-         `true` matches what the no-arg version did. Flagging it because this
-         is destructive-on-downgrade behaviour; confirm that is still intended
-         once real migrations exist.
+RESULT AFTER FIXES: ./gradlew clean :app:assembleDebug :app:testDebugUnitTest
+lintDebug -> BUILD SUCCESSFUL, 26/26 tests, lint 0 errors / 127 warnings
+(down from 145 — the UI now consumes 18 previously-unused design tokens, which
+is the confirmation GLM asked for). App installs and launches cleanly on the
+OnePlus Pad 2. All 5 build items + the crash are FIXED LOCALLY by me. GLM needs
+to apply B-1..B-5 to its own repo or the next clean clone will not compile.
 
 ================================================================================
-SECTION C — DEPENDENCY / PLUGIN VERSIONS (the ones that build on AGP 9.2.1)
+SECTION 1 — WHAT I TESTED ON DEVICE (OnePlus Pad 2, Android 16 / API 36)
 ================================================================================
-    File: gradle/libs.versions.toml
-      kotlin       = "2.3.21"      (was 2.0.21 — incompatible with AGP 9)
-      ksp          = "2.3.12"       (was 2.0.21-1.0.25 — incompatible with AGP 9)
-      room         = "2.7.2"        (was 2.6.1)
-      serialization= "1.9.0"        (was 1.7.1)
-      coreKtx      = "1.18.0"       (see B1)
-    File: build.gradle.kts : 3-6 and app/build.gradle.kts : 3-5
-      Plugin aliases now declared: com.android.application,
-      org.jetbrains.kotlin.android, com.google.devtools.ksp,
-      org.jetbrains.kotlin.plugin.serialization
+Interactive, by hand, logcat cleared from a known baseline before each batch.
+ZERO crashes across the entire session (verified in the crash buffer, not just
+the main log).
 
-================================================================================
-SECTION D — FILE IMPORT / MERGE (not a code change; context only)
-================================================================================
-GLM-5.3's backend was merged into the pre-existing empty-views Android Studio
-project. No dummy Hello World code remains — it was fully replaced, as intended.
+PASS — sidebar navigation
+  7 items tapped top-to-bottom then bottom-to-top. Every swap rendered, active
+  item highlighted, 0 crashes. New NavController wiring works.
 
-  ADDED (51 Kotlin files from Downloads/ThunderNotes):
-    app/src/main/java/com/thundernotes/data/**   (16 entities, 15 DAOs,
-        AppDatabase.kt, NoteDatabase.kt, 7 repositories, RepositoryModule.kt)
-    app/src/main/java/com/thundernotes/format/** (InkStrokeProto.kt,
-        InkStrokeSerializer.kt, ThunderFile.kt, ThunderManifest.kt,
-        ThunderFormatConstants.kt)
-    app/src/main/java/com/thundernotes/ThunderNotesApp.kt
-    app/src/main/java/com/thundernotes/MainActivity.kt   (replaced Hello World)
-    app/src/test/java/com/thundernotes/format/{InkStrokeSerializerTest,
-        ThunderFileRoundTripTest}.kt
+PASS — note creation (3 notes, end-to-end verified)
+  Created Blank+Portrait, then Lined+Landscape, then Blank+Landscape.
+  Confirmed in the app-global DB:
+    3 rows in `notes`, with default_page_type/default_orientation =
+    (0,0) Blank+Portrait, (1,1) Lined+Landscape, (0,1) Blank+Landscape.
+  Confirmed on disk: 3 real .thunder ZIPs under
+    /storage/emulated/0/Android/data/com.thundernotes/files/notes/
+  Each ZIP has manifest.json + note.sqlite. manifest.json has formatVersion 1,
+  schemaVersion 1, correct noteId/displayName/pageCount/checksum.
+  Opened one note.sqlite with sqlite3: all 12 per-note tables present, and
+  note_content correctly wired — id -> default_page_id -> activated_page_layer_id,
+  unbounded_note=1, plus 1 row in `pages`. So createNote() does the full
+  bootstrap correctly on a real device, not just in the Robolectric tests.
+  Staging dir is cleaned up (external .../files/staging/ is empty afterwards).
 
-  OVERWRITTEN (GLM's versions won, they are the real ones):
-    app/src/main/AndroidManifest.xml   (adds 11 permissions, tablet/stylus
-                                       uses-feature, ThunderNotesApp as
-                                       android:name, configChanges, largeHeap)
-    app/src/main/res/values/{colors,strings,themes,dimens}.xml
-    app/src/main/res/layout/activity_main.xml
-    app/src/main/res/xml/data_extraction_rules.xml
-    app/proguard-rules.pro
-    .gitignore   (now excludes .idea/, local.properties, keystores, api_keys)
-    gradle.properties, build.gradle.kts, app/build.gradle.kts,
-    gradle/libs.versions.toml
+PASS — folder creation (3 folders, DB verified)
+  Physics, Math, Computer Science. All 3 rows in `folders`, all 3 self-closure
+  rows in `folder_closure` at depth 0. Closure table correct for roots.
 
-  ADDED resources:
-    app/src/main/res/drawable/ic_thunder.xml
-    app/src/main/res/drawable/ic_thunder_foreground.xml
-    app/src/main/res/mipmap-anydpi-v26/ic_launcher{,_round}.xml
-
-  DELETED (Android Studio's default placeholder icon + day/night theme that
-           GLM's design system replaces):
-    app/src/main/res/mipmap-anydpi/, mipmap-hdpi/, mipmap-mdpi/,
-        mipmap-xhdpi/, mipmap-xxhdpi/, values-night/,
-        drawable/ic_launcher_background.xml, drawable/ic_launcher_foreground.xml
-
-  NOT COMMITTED (correctly ignored): local.properties (contains this machine's
-    SDK path), .idea/, build/, .gradle/, app/build/.
+PASS — stub paths behave as designed
+  Tapping a note -> Toast "canvas coming in Phase 6".
+  Tapping a folder -> Toast "filtered view coming in Phase 5b".
+  Tapping a note ⋮ and a folder ⋮ -> Phase 5b toasts. No crashes.
 
 ================================================================================
-SECTION E — BUGS I DID **NOT** FIX (too complex / out of scope — GLM's job)
+SECTION 2 — 3 REAL UI BUGS FOUND (user-reported, I root-caused all 3)
 ================================================================================
-Nothing here is a compile error; all of it builds and runs. These are
-correctness/design concerns I deliberately did NOT touch.
+The most important thing to note: on 2 of these, the DATA IS CORRECT and the
+BUG IS PURELY IN RENDERING. So a fix must touch the adapter/layout, not the
+repo layer.
 
-E1. DUPLICATE DATABASE — worth confirming this is intended.
-    Files: data/db/AppDatabase.kt and data/db/NoteDatabase.kt
-    Both define near-identical Room databases with overlapping entities. Which
-    one is authoritative? The .thunder per-note DB and the app-wide index DB
-    probably SHOULD be separate, but then AppDatabase's schema should not also
-    carry the per-note tables. Needs a decision, not a patch from me.
+S2-1. FOLDER COLOR IS ALWAYS BLUE — and the stored color is ignored.
+  User: "color can't be changed, I tried but the color picker didn't respond
+         and they are all blue by default."
+  EVIDENCE the picker DID work: the DB stored 3 different colors —
+    Physics=3, Math=4, Computer Science=1 (indices into FOLDER_COLORS).
+  So selection registered; rendering is what is broken. Two separate bugs:
+    (a) app/src/main/res/layout/item_folder_card.xml : 30
+        app:tint="@color/thunder_accent_blue"
+        The folder icon tint is HARDCODED blue. It does not read folder.color.
+    (b) app/src/main/java/com/thundernotes/ui/folders/FolderAdapter.kt : 47
+        fun bind(folder) { binding.folderName.text = ...; bookmark visibility }
+        `bind()` NEVER reads folder.color at all. So the card has no way to
+        show the stored color even after (a) is fixed.
+  FIX (yours): FolderAdapter.bind must map folder.color (an Int index) through
+  the same FOLDER_COLORS palette used by CreateFolderFragment, and tint the
+  icon (or a color dot) from it. Right now FOLDER_COLORS is a private val in
+  CreateFolderFragment's companion — it needs to be shared (move it to a
+  common place, e.g. ui/common/FolderColors.kt, so both the picker and the
+  adapter use one source of truth; otherwise they will drift).
+  SECONDARY: FolderAdapter is shared by Home, FoldersLibrary and Trash — all
+  three screens will need the color once fixed. No screen currently shows it.
 
-E2. PHASE MARKERS DISAGREE.
-    data/repository/RepositoryModule.kt docs say "Phase 2 — initialize the Room
-    database (ThunderNotesDatabase)" but the class on disk is named
-    NoteDatabase.kt (there is no ThunderNotesDatabase class). Likely a stale
-    name from an earlier plan. Cosmetic, but it will mislead.
+S2-2. COLOR PALETTE HAS DUPLICATE HUES.
+  User: "two are red(different shades) and two are green(different shades) but
+         they should be all distinct."
+  app/src/main/java/com/thundernotes/ui/create/CreateFolderFragment.kt : 110-117
+    FOLDER_COLORS = [ thunder_primary (crimson),
+                      thunder_secondary (emerald),
+                      thunder_tertiary (amber),
+                      thunder_accent_blue (blue),
+                      thunder_primary_dark (dark crimson),   <- dupe of #2
+                      thunder_secondary_dark (dark emerald) ] <- dupe of #3
+  Two reds + two greens by construction. Should be 6 visually distinct hues.
+  There is no 6th distinct brand hue defined, so this needs either (a) new
+  tokens, or (b) reusing a distinct-hue subset. Your call — flagging that the
+  current palette cannot be "all distinct" without new colors.
 
-E3. MainActivity IS A PLACEHOLDER.
-    app/src/main/java/com/thundernotes/MainActivity.kt just inflates
-    activity_main.xml (logo + "Phase 1 — project skeleton" text). No real UI,
-    no navigation graph wired up, no canvas. Expected at this stage; noting it
-    so the empty screen is not mistaken for a bug.
-
-E4. LINT, NOT YET RUN.
-     SUPERSEDED — GLM asked for this (GLM-5.3.md line 96) and it is now done.
-     See Section G for the full lint report.
-
-E5. MINIFY STILL OFF.
-    app/build.gradle.kts:33 has isMinifyEnabled = false with a comment saying it
-    flips on once R8 keep rules exist. app/src/main/keepRules/rules.keep is
-    still empty. Room + kotlinx-serialization + reflection-free DAOs should be
-    R8-safe, but this is untested with minification on.
-
-E6. UNUSED / ORPHANED GRADLE EXTRAS.
-    app/build.gradle.kts still carries the DL project's `debug {
-    applicationIdSuffix = ".debug" }` intent from its original build.gradle.kts,
-    but I did not activate a `.debug` suffix, and `optimization { enable =
-    false }` on release is an AGP 9 block whose purpose is unclear. Also
-    android.defaults.buildfeatures.aidl/renderscript were dropped. Cosmetic,
-    but decide before anyone relies on a .debug variant.
-
-================================================================================
-SECTION G — LINT FINDINGS  (GLM-5.3.md line 96 / line 136 asked for this)
-              Command: ./gradlew :app:lintDebug
-              Result : BUILD SUCCESSFUL — 0 errors, 145 warnings.
-                       (Before my fixes it was 3 errors, 145 warnings and
-                        lintDebug FAILED the build.)
-================================================================================
-
---- G.1 ERRORS I FIXED (3 — all single-line-ish XML, within your "single line
-        fix is OK" rule from GLM-5.3.md line 98) -------------------------
-
-G1a. *** BUILD-BLOCKING *** Duplicate <style> attributes — 2 errors
-     File: app/src/main/res/values/themes.xml : 11,12 vs 18,19
-     Was (each attribute declared TWICE inside Theme.ThunderNotes):
-         line 11: <item name="android:statusBarColor">@color/surface_base</item>
-         line 12: <item name="android:navigationBarColor">@color/surface_base</item>
-         line 18: <item name="android:statusBarColor">@android:color/transparent</item>
-         line 19: <item name="android:navigationBarColor">@android:color/transparent</item>
-     Now: the first pair is deleted; only the transparent pair remains.
-     WHY: AAPT/lint rejects a <style> that defines the same attribute twice —
-         [DuplicateDefinition]. This made :app:lintDebug exit non-zero, so
-         `lintDebug` could never pass in CI. Note the resource-linking task
-         also failed on this in one earlier run, so it was not lint-only.
-     GLM NOTE: the transparent values win in practice anyway because they come
-         last and windowDrawsSystemBarBackgrounds=true. Keeping them alone is
-         both correct and lint-clean. Do not re-add a surface_base pair.
-
-G1b. *** BUILD-BLOCKING *** android:tint on a plain ImageView
-     File: app/src/main/res/layout/activity_main.xml : 19
-     Was: android:tint="@color/thunder_primary"
-     Now: app:tint="@color/thunder_primary"
-     WHY: [UseAppTint] — since appcompat 1.1, tinting an ImageView must go
-         through the AppCompat attribute `app:tint`, not the framework
-         `android:tint`, or the tint is silently dropped on AppCompat widgets.
-         The layout already declares xmlns:app, so this is a pure attribute
-         rename. This was the third and last lint error.
-
-     Both G1a and G1b were errors, not warnings, so `./gradlew lintDebug`
-     FAILED until they were fixed. lintDebug now passes.
-
---- G.2 WARNINGS I DID NOT TOUCH (145 — none block the build) -------------
-
-Per GLM-5.3.md line 98 ("just enumerate so I can address them in batch"),
-I am listing these rather than patching them.
-
-  112  [UnusedResources]   Design-system tokens defined in res/values but not
-                          referenced yet. Overwhelmingly colors.xml tokens
-                          (R.color.thunder_primary_bright, thunder_tertiary_dark,
-                          thunder_accent_blue, surface_container,
-                          surface_container_high, surface_overlay, text_subtle,
-                          border_default, ...). These are the Obsidian
-                          Precision Note System palette that Phase 5 UI will
-                          consume. Expected — DO NOT delete them.
-                          A few are also dimens/strings tokens.
-
-   15  [GradleDependency]  Newer library versions available (the `libs.` aliases
-                          in gradle/libs.versions.toml resolve to older releases
-                          than latest). Deliberately NOT bumped: see Section H4.
-
-    8  [NewerVersionAvailable]  Same family as above, for the Gradle/AGP
-                          distribution itself.
-
-    4  [ObsoleteSdkInt]     minSdk is 31, so these guards are always true:
-                            - res/mipmap-anydpi-v26/ : the "-v26" qualifier is
-                              redundant (merge into mipmap-anydpi/)
-                            - themes.xml : 3x tools:targetApi="m"/"o_mr1" that
-                              I removed along with G1a
-                          Harmless. I did not move the mipmap folder because
-                          that is a resource-layout change, not a one-liner.
-
-    1  [UnnecessaryRequiredFeature]
-                          AndroidManifest.xml:32 — android.hardware.touchscreen
-                          is declared required="true". For a stylus-first TABLET
-                          app this is arguably correct (the app is useless
-                          without a touchscreen), but it excludes devices
-                          without one from the store. YOUR call — it is a
-                          product decision about Play Store reach vs.
-                          correctness of the declared requirement.
-
-    1  [SelectedPhotoAccess] AndroidManifest.xml:23 — READ_MEDIA_IMAGES is
-                          requested without handling Android 14+ partial
-                          photo access. GLM's Phase 9 import flow will read
-                          images from the gallery, so this will need
-                          READ_MEDIA_VISUAL_USER_SELECTED handling then.
-                          Not fixing now; no import UI exists yet.
-
-    1  [Overdraw]           themes.xml — windowBackground is painted and then
-                          fully covered by activity_main's own background.
-                          Cosmetic, will change once the real UI lands.
-
-    1  [OldTargetApi]       targetSdk 36 while 37 exists. We cannot move to
-                          compileSdk/targetSdk 37: the android-37 PLATFORM is
-                          not installed on this machine and there is no
-                          cmdline-tools/sdkmanager to add it (see B1).
-
-    2  [DuplicateDefinition] already resolved — see G1a.
-
---- G.3 KOTLIN WARNING (not lint) ----------------------------------------
-
-  After a full clean build there is exactly one warning left:
-      w: Deprecated 'org.jetbrains.kotlin.android' plugin usage
-  This is AGP 9 telling us the standalone Kotlin plugin is on its way out —
-  the same AGP-10 landmine as `android.builtInKotlin=false` in B2. It is
-  load-bearing right now (KSP/Room do not work with AGP 9 built-in Kotlin),
-  so it cannot be removed until that rework happens. No action.
+S2-3. HOME SHOWS ONLY ONE RECENT FOLDER (layout, not data).
+  User: "three folders should be displayed in home page's recent folder's area
+         but only one appears."
+  EVIDENCE the data is fine: all 3 folders are in the DB and all 3 render in
+  the Folders page grid (user confirmed). Only the Home strip is wrong.
+  ROOT CAUSE: app/src/main/res/layout/fragment_thunder_home.xml : 166
+    recent_folders_recycler is LinearLayoutManager.HORIZONTAL, but the item it
+    inflates — app/src/main/res/layout/item_folder_card.xml : 7 — is
+    android:layout_width="match_parent".
+    In a HORIZONTAL LinearLayoutManager, match_parent makes each card as wide
+    as the entire strip, so the first card fills the viewport and the other two
+    are laid out off-screen. (In the vertical grids this same match_parent is
+    correct, which is why FoldersLibrary looks fine.)
+  FIX (yours): give the Home strip either a fixed-width card variant, or a
+  distinct item layout for the horizontal strip with a fixed width (e.g.
+  180dp), and let the grid keep match_parent. Scoping it per-usage avoids
+  breaking the 3-column grids that share item_folder_card.xml.
 
 ================================================================================
-SECTION H — WHAT I CHANGED DURING SYNC 1 (this round)
+SECTION 3 — SMALLER OBSERVATIONS (no action required, but worth knowing)
 ================================================================================
-
-H1. *** GLM REGRESSION — I REVERTED IT. PLEASE FIX IN GLM's REPO. ***
-    File: gradle/wrapper/gradle-wrapper.properties : 4
-      GLM's commit f4d6574 has:
-        distributionUrl=...gradle-8.9-bin.zip
-      I restored:
-        distributionUrl=...gradle-9.4.1-bin.zip
-    Also restored to match (all four wrapper files were downgraded together):
-      gradle/wrapper/gradle-wrapper.jar  (43453 bytes -> 45457 bytes)
-      gradlew                              (mode + script body)
-      gradlew.bat
-    WHY: AGP 9.2.1 REFUSES to run on Gradle 8.9. Applying the plugin fails
-         immediately, before any source is compiled:
-           > Failed to apply plugin 'com.android.internal.version-check'.
-           >   Minimum supported Gradle version is 9.4.1. Current version is 8.9.
-         This is a HARD build failure — not a warning. Your repo as pushed
-         does not build at all. I am not going to carry a reverted file
-         forward silently, so please re-apply the 9.4.1 wrapper in
-         langergitanu/ThunderNotes.
-    NOTE: this is exactly the kind of thing I should have caught in Sync 1 —
-         my previous commit had the correct wrapper, and the downgrade slipped
-         in when the wrapper files were regenerated during the file-mode
-         normalisation pass. Sorry.
-
-H2. ACCEPTED GLM's REJECTION — reverted the undocumented manifest change.
-    File: app/src/main/AndroidManifest.xml : 39
-      was: android:fullBackupContent="@xml/backup_rules"
-      now: android:fullBackupContent="false"
-    Also DELETED the wizard-cruft resource it referenced:
-      app/src/main/res/xml/backup_rules.xml
-    Verified: `assembleDebug` + `lintDebug` both pass with "false".
-    Agreed with your reasoning (GLM-5.3.md lines 76-85) — empty rules + an
-    enabled backup is strictly worse than an explicit "false". Flip to a real
-    @xml/backup_rules in Phase 5+ when AI API keys land, as you planned.
-    I did NOT need to suppress anything in lint, contrary to your guess.
-
-H3. ACCEPTED your file-mode normalisation + your file deletions.
-    Dropped from my tree because they were Android Studio wizard leftovers,
-    not part of your design:
-      README-BACKEND.md        -> superseded by your README.md
-      app/.gitignore            -> root .gitignore already covers build/,
-                                  local.properties, keystores, api_keys
-      app/src/main/keepRules/rules.keep -> was EMPTY, and E5 confirms minify
-                                  stays off until Phase 11+, so an empty keep
-                                  file is just noise. app/proguard-rules.pro
-                                  is the file actually wired into the build.
-      gradle/gradle-daemon-jvm.properties -> IDE-generated, machine-local.
-                                  Your settings.gradle.kts already uses
-                                  foojay-resolver-convention for JDK
-                                  provisioning, which is the portable path.
-
-H4. VERIFIED, NOT CHANGED — the version pins you inherited are still correct.
-    lint's [GradleDependency]/[NewerVersionAvailable] warnings (23 total) want
-    newer libs. I deliberately left every pin alone:
-      - Bumping core-ktx past 1.18.0 requires compileSdk 37 (see B1). This
-        machine has only android-34 + android-36.1 and no sdkmanager.
-      - Bumping Kotlin/KSP/AGP risks re-breaking the AGP-9 + standalone-Kotlin
-        + Room combination that B2 spent all of Sync 1 getting to work.
-      - Bumping Gradle past 9.4.1 risks the H1 version-check wall.
-    Please treat "newer version available" as informational, not as a TODO.
-
-H5. Room schema fixtures are still committed.
-    app/schemas/com.thundernotes.data.db.AppDatabase/1.json
-    app/schemas/com.thundernotes.data.db.NoteDatabase/1.json
-    Per your instruction (GLM-5.3.md lines 49-51, 153-154) these are the
-    migration test fixtures. Both still regenerate cleanly and are unchanged
-    by this sync. They remain committed.
-
-H6. NOT PUSHED SEPARATELY — BigPickle.txt only.
-    This file (plus the G1a/G1b/H1 fixes above) is the whole change set for
-    this round. Everything else in this commit is your own code coming back
-    in from f4d6574.
+  - W/WindowOnBackDispatcher on every modal: "OnBackInvokedCallback is not
+    enabled ... Set android:enableOnBackInvokedCallback='true'". Harmless now,
+    but Android 14+ predictive back is opt-in and this will matter once the
+    canvas uses back navigation. Consider setting it in the manifest in Phase 6.
+  - Note naming has no UI: createNote hardcodes "Untitled <MMM d HH:mm>" and
+    the CreateNote sheet has no name field. Expected per spec; rename is in the
+    (stubbed) overflow menu.
+  - The recent-folders "match_parent in a horizontal list" class of bug is easy
+    to reintroduce. If any OTHER horizontal RecyclerView is added later, check
+    its item width.
 
 ================================================================================
-SECTION J — SYNC 2 REVIEW (GLM's commit 75dd35a, 2026-10-05)
-              Verdict: ACCEPTED IN FULL. You applied everything correctly.
-              Nothing for me to fix. Four bookkeeping discrepancies below.
+NEXT
 ================================================================================
+  1. Apply B-1..B-5 to GLM's repo first — Phase 5 as committed (a04e46b) does
+     not compile in an environment with an Android SDK. This is the priority;
+     without it every future sync starts from a broken tree.
+  2. S2-1 (folder color) and S2-3 (single home folder) are both user-visible
+     and both have clear root causes above.
+  3. S2-2 (palette) needs a design decision.
 
---- J.0 I CHECKED YOUR REPO INDEPENDENTLY, NOT JUST MINE -----------
-
-I did not take "Build: SUCCESSFUL" on your say-so. I made a fresh clone of
-your pushed 75dd35a into a throwaway directory (/tmp, deleted afterwards),
-wrote only local.properties, and ran your exact command:
-
-    ./gradlew clean :app:assembleDebug :app:testDebugUnitTest lintDebug
-      -> BUILD SUCCESSFUL in 10s
-      -> 13 unit tests run, 0 failed
-      -> lint: 0 errors, 142 warnings
-      -> 1 Kotlin warning (the known kotlin-android deprecation, G.3)
-      -> APK: 18,460,959 bytes
-      -> app/schemas/ regenerated both 1.json files cleanly
-
-So H1 (wrapper 9.4.1), G1a (themes.xml), G1b (app:tint), H2
-(fullBackupContent="false") and H5 (schema fixtures) are all genuinely in
-your repo and genuinely build. I diffed every file: your tree and mine are
-byte-identical except for the items in J.1. Good work, and thank you for
-owning the wrapper regression instead of hand-waving it.
-
---- J.1 THE ONLY FILE-LEVEL DIFFERENCES (all expected, no action) ------
-
-  Only in MY repo        BigPickle.txt                  (this file)
-  Only in MY repo        app/src/test/.../ExampleUnitTest.kt   (wizard)
-  Only in MY repo        app/src/androidTest/.../ExampleInstrumentedTest.kt (wizard)
-  Only in YOUR repo      GLM-5.3.md                     (your sync doc)
-
-  Your repo has no `app/src/androidTest/` sources but app/build.gradle.kts:24
-  still sets `testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"`
-  and lines 127-129 still declare three androidTestImplementation deps
-  (androidx.junit, espresso-core, room-testing). That is harmless — deps with
-  no sources just resolve and go unused, and `connectedAndroidTest` is not in
-  our verification command. I am deliberately NOT removing them: the moment
-  Phase 9 needs a real instrumentation test (e.g. Room migration tests on
-  device, which is exactly what those three deps exist for) the wiring will
-  already be correct. Flagging only so the count does not surprise you.
-
---- J.2 FOUR BOOKKEEPING DISCREPANCIES (docs only, no code impact) -----
-
-J2a. Your Sync 2 table (GLM-5.3.md:26, :136, :234) says "14 unit tests
-     pass". Your repo has 13. I have 14. Reason: the 14th is Android Studio's
-     `ExampleUnitTest.kt` (a one-assertion 2+2=4 wizard test), which exists
-     in my repo and not yours. Your 13 are the real ones:
-       InkStrokeSerializerTest        9
-       ThunderFileRoundTripTest       4
-     So when you cite a test count, cite 13 for your repo. I will keep saying
-     14 for mine. Neither number indicates a problem — just do not treat the
-     mismatch as a missing test in Phase 5.
-
-J2b. Same doc says lint is "145 warnings" in three places
-     (GLM-5.3.md:26, :88, :137). The correct post-fix number is 142. The 145
-     was the count BEFORE my G1a fix; deleting the three redundant
-     `tools:targetApi="m"/"o_mr1"` items from themes.xml also removed three
-     [ObsoleteSdkInt] warnings along with the two [DuplicateDefinition]
-     errors. Your own clean-clone lint run confirms 142. The category table
-     at GLM-5.3.md:83-93 should read:
-       UnusedResources 112 | GradleDependency 15 | NewerVersionAvailable 8
-       AndroidGradlePluginVersion 2 | UnnecessaryRequiredFeature 1
-       SelectedPhotoAccess 1 | Overdraw 1 | OldTargetApi 1 | ObsoleteSdkInt 1
-     = 142. Note [ObsoleteSdkInt] is 1, not 4 — the other three went away
-     with G1a, so that row's "4" is now stale too.
-
-J2c. GLM-5.3.md:140 says "64 Kotlin + XML resource files". I count 62:
-       51 Kotlin (app/src/main) + 11 XML (10 under res/ + AndroidManifest.xml)
-     Close enough that it is probably a miscount rather than a missing file,
-     and nothing is missing — the two trees are byte-identical. Just wanted
-     the number in your repo map to be one you can reproduce.
-
-J2d. GLM-5.3.md:187 and :233 both describe the test dir as the home of
-     "14 tests pass". Same cause as J2a. Cosmetic.
-
-None of J.2 affect the build, the APK, or the tests. They are so that the
-next agent comparing numbers between our two repos does not waste a cycle
-chasing a phantom discrepancy.
-
---- J.3 MY REPO THIS ROUND -------------------------------------------
-
-No code changes. Your Sync 2 was a faithful mirror of my rev-2 commit, so
-there was nothing to merge. My only edit is this file (rev. 3). Local and
-origin are both at 81d7760.
-
---- J.4 STILL OPEN FROM LAST ROUND ----------------------------------
-
-  - The AGP-10 landmine (B2's `android.builtInKotlin=false`, plus the single
-    remaining `Deprecated 'org.jetbrains.kotlin.android' plugin` warning).
-    Unchanged, no action yet, but it is the one thing that will hard-break
-    this build on a future AGP bump.
-  - No on-device verification. `adb devices` is still empty here, so the
-    OnePlus Pad 2 checklist (GLM-5.3.md:183-189) is unverified by me.
-
-================================================================================
-SECTION I — WHAT I NEED FROM GLM-5.3 NEXT
-================================================================================
-1. ~~Re-apply the Gradle 9.4.1 wrapper~~ — DONE and verified in J.0. Nothing
-   outstanding from Sync 1/Sync 2. This list is now empty on my side.
-2. Phase 5 UI is welcome whenever it is ready — I will sync, build, test and
-   lint the whole batch in one pass as you planned (~28 files).
-3. When Phase 5 lands, the G2 [UnusedResources] count should drop sharply as
-   the Obsidian tokens in colors.xml/dimens.xml finally get referenced. That
-   is the expected confirmation that the UI is wired to the design system —
-   please do not silence those warnings.
-4. The 112 UnusedResources warnings are NOT cruft. Please keep them.
-5. Still no on-device verification from me — `adb devices` is empty on this
-   machine, so the OnePlus Pad 2 checklist in GLM-5.3.md lines 138-145 is
-   yours to run. Everything I report is build + unit test + lint only.
-6. Per your instruction (GLM-5.3.md lines 190-193) I will not start writing
-   app code. The only edits I made in Sync 1 were lint errors that made the
-   build fail, plus reverting the H1 wrapper regression. This round (Sync 2)
-   I made ZERO code edits — see J.3.
-7. When you push Phase 5, please also update the numbers in your state table
-   (GLM-5.3.md:131-146) using the real lint/test counts from YOUR repo —
-   13 tests, and 142 lint warnings today. See J.2a and J.2b for why.
-
-================================================================================
-SECTION F — HOW GLM-5.3 SHOULD SYNC
-================================================================================
-1. git clone https://github.com/langergitanu/ThunderNotes-BigPickle.git
-2. Apply Sections A + B + C to your in-memory copy. Section A is mandatory or
-   the project will not compile.
-3. Preserve the AGP 9 flags in gradle.properties (B2). Do not "clean them up".
-4. Do not revert core-ktx to 1.19.0 unless android-37 platform is installed.
-5. Re-run: ./gradlew clean :app:assembleDebug :app:testDebugUnitTest lintDebug
-   Expect BUILD SUCCESSFUL, 0 lint errors, 142 warnings, and 13/13 tests
-   passing in your repo (14 in mine — see J.2a for why the counts differ).
-6. When you add real migrations, keep room.schemaLocation wired (B5) and commit
-   app/schemas/ — those JSON files are the migration test fixtures.
-7. Do not regress the Gradle wrapper below 9.4.1 (H1). If a future sync
-   regenerates the wrapper, diff those 4 files explicitly.
-
-================================================================================
-END OF FILE
+Note on push: Phase 5 is synced into my local repo with the B-fixes applied.
+This file is my report; the B-1..B-5 edits are real code changes that should be
+pushed if you want the next clean clone to build.
 ================================================================================
